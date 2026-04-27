@@ -4,7 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { text } = body;
+    const { text, mood, mood_intensity } = body;
 
     if (!text || typeof text !== "string") {
       return NextResponse.json(
@@ -19,7 +19,11 @@ export async function POST(request: NextRequest) {
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({
+        text,
+        mood,
+        mood_intensity,
+      }),
     });
 
     if (!response.ok) {
