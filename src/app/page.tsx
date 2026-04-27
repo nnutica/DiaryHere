@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Card } from "@/components/ui/card";
+import { JournalProgressCard } from "@/components/journal-progress-card";
 
 // Type definitions for API response
 interface AnalysisResult {
@@ -49,6 +50,49 @@ interface ParsedAnalysis {
   safetyNote: string;
 }
 
+interface JournalProgressState {
+  level: number;
+  xpInLevel: number;
+  totalXp: number;
+  entriesLogged: number;
+}
+
+const PROGRESS_STORAGE_KEY = "diary-here-progress";
+const DEFAULT_PROGRESS: JournalProgressState = {
+  level: 1,
+  xpInLevel: 0,
+  totalXp: 0,
+  entriesLogged: 0,
+};
+
+const getXpToNextLevel = (level: number) => 100 + (level - 1) * 25;
+
+const sanitizeProgress = (value: unknown): JournalProgressState => {
+  if (!value || typeof value !== "object") {
+    return DEFAULT_PROGRESS;
+  }
+
+  const candidate = value as Partial<JournalProgressState>;
+
+  return {
+    level: Math.max(1, Math.floor(candidate.level ?? DEFAULT_PROGRESS.level)),
+    xpInLevel: Math.max(0, Math.floor(candidate.xpInLevel ?? DEFAULT_PROGRESS.xpInLevel)),
+    totalXp: Math.max(0, Math.floor(candidate.totalXp ?? DEFAULT_PROGRESS.totalXp)),
+    entriesLogged: Math.max(
+      0,
+      Math.floor(candidate.entriesLogged ?? DEFAULT_PROGRESS.entriesLogged)
+    ),
+  };
+};
+
+const calculateXpGain = (analysis: AnalysisResult["result"]) => {
+  const baseXp = 10;
+  const intensityBonus = Math.round(analysis.intensity * 0.5);
+  const positivityBonus = Math.round(analysis.positivity_level * 0.3);
+
+  return Math.max(8, Math.min(20, baseXp + intensityBonus + positivityBonus));
+};
+
 export default function Home() {
   const [diaryText, setDiaryText] = useState("");
   const [selectedMood, setSelectedMood] = useState<(typeof MOOD_OPTIONS)[number]["value"]>("Sad");
@@ -56,6 +100,30 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [analysis, setAnalysis] = useState<ParsedAnalysis | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
+  const [progress, setProgress] = useState<JournalProgressState>(DEFAULT_PROGRESS);
+  const [progressReady, setProgressReady] = useState(false);
+  const [lastEarnedXp, setLastEarnedXp] = useState<number | null>(null);
+  const [leveledUp, setLeveledUp] = useState(false);
+
+  useEffect(() => {
+    const storedProgress = window.localStorage.getItem(PROGRESS_STORAGE_KEY);
+
+    if (storedProgress) {
+      try {
+        setProgress(sanitizeProgress(JSON.parse(storedProgress)));
+      } catch {
+        setProgress(DEFAULT_PROGRESS);
+      }
+    }
+
+    setProgressReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (!progressReady) return;
+
+    window.localStorage.setItem(PROGRESS_STORAGE_KEY, JSON.stringify(progress));
+  }, [progress, progressReady]);
 
   const getIntensityLabel = (score: number): string => {
     const match = INTENSITY_LABELS.find(
@@ -95,6 +163,34 @@ export default function Home() {
 
   const selectedIntensityLabel = getIntensityLabel(intensityScore);
 
+  const awardJournalXp = (result: AnalysisResult["result"]) => {
+    const gainedXp = calculateXpGain(result);
+    const xpToNextLevel = getXpToNextLevel(progress.level);
+
+    setProgress((current) => {
+      let level = current.level;
+      let xpInLevel = current.xpInLevel + gainedXp;
+      let totalXp = current.totalXp + gainedXp;
+      let entriesLogged = current.entriesLogged + 1;
+
+      while (xpInLevel >= getXpToNextLevel(level)) {
+        xpInLevel -= getXpToNextLevel(level);
+        level += 1;
+      }
+
+      setLeveledUp(level > current.level);
+
+      return {
+        level,
+        xpInLevel,
+        totalXp,
+        entriesLogged,
+      };
+    });
+
+    setLastEarnedXp(gainedXp);
+  };
+
   // Handle analyze button click
   const handleAnalyze = async () => {
     if (!diaryText.trim()) return;
@@ -126,6 +222,7 @@ export default function Home() {
 
       const parsed = parseResult(data.result);
       setAnalysis(parsed);
+      awardJournalXp(data.result);
       setErrorMessage("");
     } catch (error) {
       console.error("Error analyzing diary:", error);
@@ -149,25 +246,15 @@ export default function Home() {
         </h1>
 
         {/* Level Bar */}
-        <Card className="border-4 border-black pixel-shadow bg-white p-4">
-          <div className="flex items-center justify-between gap-4">
-            <span className="font-pixel text-sm md:text-base text-black whitespace-nowrap">
-              LV 3
-            </span>
-            <div className="flex-1 h-8 border-4 border-black bg-gray-300 relative">
-              <div
-                className="h-full bg-linear-to-r from-blue-400 to-blue-600"
-                style={{ width: "65%" }}
-              >
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <span className="font-pixel text-xs text-white drop-shadow-[2px_2px_0px_rgba(0,0,0,1)]">
-                    65/100 XP
-                  </span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </Card>
+        <JournalProgressCard
+          level={progress.level}
+          xpInLevel={progress.xpInLevel}
+          xpToNextLevel={getXpToNextLevel(progress.level)}
+          entriesLogged={progress.entriesLogged}
+          totalXp={progress.totalXp}
+          lastEarnedXp={lastEarnedXp}
+          isLeveledUp={leveledUp}
+        />
 
         <Card className="border-4 border-black pixel-shadow bg-white p-6 space-y-5">
           <div className="space-y-2">
